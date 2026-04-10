@@ -38,6 +38,11 @@ st.markdown("""
     box-shadow: 0 10px 40px rgba(0,0,0,0.7);
     text-align: center;
     margin-bottom: 15px;
+    transition: 0.3s;
+}
+.card:hover {
+    transform: scale(1.02);
+    box-shadow: 0 0 25px rgba(0,255,200,0.4);
 }
 
 /* METRIC */
@@ -45,15 +50,26 @@ st.markdown("""
     background: rgba(255,255,255,0.08);
     padding: 20px;
     border-radius: 18px;
-    transition: 0.3s;
-}
-.stMetric:hover {
-    transform: scale(1.05);
 }
 
 /* SIDEBAR */
 section[data-testid="stSidebar"] {
     background: rgba(20,30,48,0.95);
+}
+
+/* LABEL */
+label {
+    color: #00FFCC !important;
+    font-weight: bold;
+}
+
+/* SCROLL */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-thumb {
+    background: #00FFAA;
+    border-radius: 10px;
 }
 
 </style>
@@ -62,7 +78,23 @@ section[data-testid="stSidebar"] {
 # -------------------- TITLE --------------------
 st.title("🌍 AQI AI Smart Dashboard")
 
-# -------------------- DATA SOURCE --------------------
+# -------------------- SAFE RANGES --------------------
+safe_ranges = {
+    "PM2.5": (0, 60),
+    "PM10": (0, 100),
+    "NO": (0, 40),
+    "NO2": (0, 80),
+    "NOx": (0, 80),
+    "NH3": (0, 200),
+    "CO": (0, 1),
+    "SO2": (0, 80),
+    "O3": (0, 100),
+    "Benzene": (0, 5),
+    "Toluene": (0, 20),
+    "Xylene": (0, 20)
+}
+
+# -------------------- DATA --------------------
 st.sidebar.header("📁 Data Source")
 
 data_option = st.sidebar.radio(
@@ -89,10 +121,9 @@ for col in cols:
     if col in df.columns:
         df[col] = df[col].fillna(df[col].median())
 
-if 'AQI' in df.columns:
-    df['AQI'] = df['AQI'].fillna(df['AQI'].median())
+df['AQI'] = df['AQI'].fillna(df['AQI'].median())
 
-# -------------------- DATE FIX --------------------
+# -------------------- DATE --------------------
 if 'Date' in df.columns:
     df['Date'] = pd.to_datetime(df['Date'])
     df['Year'] = df['Date'].dt.year
@@ -131,7 +162,6 @@ model = train_model(X_scaled, y)
 # -------------------- SIDEBAR --------------------
 with st.sidebar:
     st.header("⚙ Controls")
-
     selected_city_name = st.selectbox("Select City", cities)
 
     if 'City' in df.columns:
@@ -139,10 +169,44 @@ with st.sidebar:
 
 # -------------------- USER INPUT --------------------
 input_data = {}
+st.sidebar.markdown("### 🧪 Pollutant Levels")
 
 for col in X.columns:
     if col != "City_Label":
-        input_data[col] = st.sidebar.slider(col, 0.0, 500.0, 50.0)
+
+        min_val, max_safe = safe_ranges.get(col, (0, 100))
+
+        val = st.sidebar.slider(
+            f"{col} (Safe ≤ {max_safe})",
+            0.0,
+            500.0,
+            float(max_safe/2)
+        )
+
+        if val <= max_safe:
+            color = "#00FF9C"
+            status = "Safe"
+        else:
+            color = "#FF4B4B"
+            status = "Unsafe"
+
+        st.sidebar.markdown(f"""
+        <div style="background:rgba(255,255,255,0.05);
+                    padding:8px;
+                    border-radius:10px;
+                    margin-bottom:8px;">
+            <div style="color:{color}; font-weight:bold;">
+                {col}: {val} → {status}
+            </div>
+            <div style="height:6px;
+                        background:{color};
+                        border-radius:5px;
+                        width:{min(val/500*100,100)}%;">
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        input_data[col] = val
 
 if 'City_Label' in X.columns:
     input_data["City_Label"] = selected_city
@@ -166,23 +230,44 @@ category = get_category(prediction)
 
 # -------------------- HEADER --------------------
 st.markdown(f"""
-<div class="card">
+<div class="card" style="
+    background: linear-gradient(135deg, rgba(0,255,200,0.2), rgba(0,0,0,0.6));
+">
     <h2>🌆 {selected_city_name}</h2>
-    <h1>🌫 AQI: {prediction:.2f}</h1>
-    <h3>{category}</h3>
+    <h1 style="font-size:50px;">🌫 {prediction:.2f}</h1>
+    <h3 style="color:#00FFAA;">{category}</h3>
 </div>
 """, unsafe_allow_html=True)
 
-# -------------------- GAUGE (NO API) --------------------
+# -------------------- SAFETY SUMMARY --------------------
+st.subheader("🛡 Safety Summary")
+
+unsafe = []
+safe = []
+
+for col, val in input_data.items():
+    if col in safe_ranges:
+        if val > safe_ranges[col][1]:
+            unsafe.append(col)
+        else:
+            safe.append(col)
+
+st.markdown(f"""
+<div class="card">
+    <h4>✅ Safe: {len(safe)} | ⚠️ Unsafe: {len(unsafe)}</h4>
+    <p style="color:#00FFAA;">Safe: {', '.join(safe)}</p>
+    <p style="color:#FF4B4B;">Unsafe: {', '.join(unsafe)}</p>
+</div>
+""", unsafe_allow_html=True)
+
+# -------------------- GAUGE --------------------
 st.subheader("🎯 AQI Speedometer")
 
 fig_gauge = go.Figure(go.Indicator(
     mode="gauge+number",
     value=prediction,
-    title={'text': "Air Quality Index"},
     gauge={
         'axis': {'range': [0, 500]},
-        'bar': {'color': "white"},
         'steps': [
             {'range': [0, 50], 'color': "green"},
             {'range': [50, 100], 'color': "yellow"},
@@ -199,9 +284,7 @@ st.plotly_chart(fig_gauge, use_container_width=True)
 # -------------------- DISTRIBUTION --------------------
 st.subheader("📊 AQI Distribution")
 
-fig = px.histogram(df, x="AQI", nbins=50,
-                   color_discrete_sequence=["#00C9FF"])
-
+fig = px.histogram(df, x="AQI", nbins=50)
 fig.update_layout(template="plotly_dark")
 st.plotly_chart(fig, use_container_width=True)
 
@@ -213,29 +296,16 @@ imp_df = pd.DataFrame({
     "Importance": model.feature_importances_
 }).sort_values(by="Importance")
 
-fig2 = px.bar(
-    imp_df,
-    x="Importance",
-    y="Feature",
-    orientation="h",
-    color="Importance",
-    color_continuous_scale="teal"
-)
-
+fig2 = px.bar(imp_df, x="Importance", y="Feature", orientation="h")
 fig2.update_layout(template="plotly_dark")
 st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------- TREND --------------------
 if all(col in df.columns for col in ['Year','Month','Day']):
     st.subheader("📅 AQI Trend")
-
     df['Date'] = pd.to_datetime(df[['Year','Month','Day']])
 
-    fig3 = px.line(df.sort_values("Date"),
-                   x="Date",
-                   y="AQI",
-                   color_discrete_sequence=["#00FFAA"])
-
+    fig3 = px.line(df.sort_values("Date"), x="Date", y="AQI")
     fig3.update_layout(template="plotly_dark")
     st.plotly_chart(fig3, use_container_width=True)
 
@@ -246,4 +316,4 @@ top = imp_df.sort_values(by="Importance", ascending=False).head(3)["Feature"]
 st.info(f"Top factors affecting AQI: {', '.join(top)}")
 
 # -------------------- FOOTER --------------------
-st.markdown("<div class='footer'>© Copyright 2026 Team ABH Smart AQI Dashboard</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>© Copyright 2026 AQI Dashboard</div>", unsafe_allow_html=True)
